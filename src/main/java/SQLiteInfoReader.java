@@ -3,8 +3,6 @@ import parser.PageParser;
 
 import java.io.IOException;
 import java.io.RandomAccessFile;
-import java.util.Arrays;
-import java.util.Comparator;
 
 public class SQLiteInfoReader {
     private static final int SQLITE_HEADER_SIZE = 100;
@@ -24,93 +22,33 @@ public class SQLiteInfoReader {
             System.out.println("File size: " + file.length() + " bytes");
 
             HeaderParser.parserHeader(header);
+        }
+    }
 
 
-            System.out.println("\n=== First Page Info ===");
+    public static void analyseDatabasePages(String dbPath) throws IOException {
+        try (RandomAccessFile file = new RandomAccessFile(dbPath, "r")) {
+            byte[] header = new byte[SQLITE_HEADER_SIZE];
+            file.readFully(header);
+
             int pageSize = getPageSize(header);
+
+            // Read and parse first page
+            file.seek(0);
             byte[] firstPage = new byte[pageSize];
             file.readFully(firstPage);
-            PageParser.parsePage(firstPage);
+
+            System.out.println("=== Analyzing First Page ===");
+            PageParser.parsePage(firstPage,true);
+
+            // Optionally analyze more pages
+            long fileSize = file.length();
+            int totalPages = (int)(fileSize / pageSize);
+            System.out.println("\nTotal pages in database: " + totalPages);
         }
     }
 
 
-    public static void analyseDatabaseCells(String dbPath) throws IOException {
-        try (RandomAccessFile file = new RandomAccessFile(dbPath, "r")) {
-            byte[] header = new byte[100];
-            file.readFully(header);
-            int pageSize = getPageSize(header);
-
-            file.seek(0);
-            byte[] page = new byte[pageSize];
-            file.readFully(page);
-
-            // Get page info
-            int numCells = ((page[103] & 0xFF) << 8) | (page[104] & 0xFF);
-            int cellContentStart = ((page[105] & 0xFF) << 8) | (page[106] & 0xFF);
-
-            System.out.println("=== Page Structure ===");
-            System.out.println("Page size: " + pageSize);
-            System.out.println("Number of cells: " + numCells);
-            System.out.println("Cell content starts at: " + cellContentStart);
-            System.out.println("Pointer array ends at: " + (108 + numCells * 2));
-
-            // Collect all cell info
-            CellInfo[] cells = new CellInfo[numCells];
-            for (int i = 0; i < numCells; i++) {
-                int pointerAddr = 108 + (i * 2);
-                int offset = ((page[pointerAddr] & 0xFF) << 8) |
-                        (page[pointerAddr + 1] & 0xFF);
-                cells[i] = new CellInfo(i, offset);
-            }
-
-
-            // Sort by offset to find physical layout
-            CellInfo[] physicalOrder = cells.clone();
-            Arrays.sort(physicalOrder, Comparator.comparingInt(a -> a.offset));
-
-
-            // Calculate sizes
-            for (int i = 0; i < physicalOrder.length; i++) {
-                if (i < physicalOrder.length - 1) {
-                    physicalOrder[i].size = physicalOrder[i + 1].offset - physicalOrder[i].offset;
-                } else {
-                    // Last cell extends to end of page
-                    physicalOrder[i].size = pageSize - physicalOrder[i].offset;
-                }
-            }
-
-
-            // Display in physical order
-            System.out.println("\n=== Cells (Physical Order on Page) ===");
-            for (CellInfo cell : physicalOrder) {
-                System.out.printf("Cell %d: offset=%d-%d (%d bytes)%n",
-                        cell.index, cell.offset,
-                        cell.offset + cell.size - 1, cell.size);
-            }
-
-            System.out.println("\n=== Cell Data ===");
-            for (CellInfo cell: physicalOrder){
-                byte[] cellByteData = Arrays.copyOfRange(page,cell.offset,cell.offset+cell.size);
-                printCellData(cellByteData,cell.size);
-            }
-
-            // Show free space
-            int usedByHeaders = 108 + numCells * 2;
-            int usedByCells = pageSize - cellContentStart;
-            int freeSpace = cellContentStart - usedByHeaders;
-
-
-            System.out.println("\n=== Space Usage ===");
-            System.out.println("Headers & pointers: " + usedByHeaders + " bytes");
-            System.out.println("Cell data: " + usedByCells + " bytes");
-            System.out.println("Free space: " + freeSpace + " bytes");
-        }
-    }
-
-    private static void printCellData(byte[] cell,int cellsize){
-
-    }
 
     /**
      * Parse page size from big-endian format to int

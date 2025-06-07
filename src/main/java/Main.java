@@ -33,6 +33,7 @@ public class Main {
     switch (command) {
       case ".dbinfo" -> SQLiteInfoReader.displayDatabaseInfo(databaseFilePath);
       case ".analyse" -> SQLiteInfoReader.analyseDatabasePages(databaseFilePath);
+      case ".tables" -> SQLiteInfoReader.dotTableCommand(databaseFilePath);
       default -> {
         System.err.println("Unknown command: " + command);
         System.err.println("Available commands: .dbinfo");

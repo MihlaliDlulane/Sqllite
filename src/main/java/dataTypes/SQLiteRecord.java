@@ -1,4 +1,4 @@
-package parser;
+package dataTypes;
 
 import java.nio.ByteBuffer;
 import java.nio.ByteOrder;
@@ -13,12 +13,24 @@ public class SQLiteRecord {
     private final int headerSize;
     private final int dataSize;
 
+    private String tableName;
+    private int pageNumber;
+    private int cellIndex;
+    private RecordType recordType;
+
+    public enum RecordType {
+        SCHEMA_RECORD, // Record from sqlite_master table
+        TABLE_RECORD, // Regular table data
+        INDEX_RECORD, // Index data
+    }
+
     private SQLiteRecord(List<Long> serialTypes, List<Object> values,
                          int headerSize, int dataSize) {
         this.serialTypes = serialTypes;
         this.values = values;
         this.headerSize = headerSize;
         this.dataSize = dataSize;
+        this.recordType = RecordType.TABLE_RECORD; // default
     }
 
     public static SQLiteRecord parse(byte[] data, int offset, int payloadSize) {
@@ -31,6 +43,56 @@ public class SQLiteRecord {
     public Object getValue(int column) { return values.get(column); }
     public int getColumnCount() { return values.size(); }
     public long getSerialType(int column) { return serialTypes.get(column); }
+    public String getTableName() { return tableName; }
+    public int getPageNumber() { return pageNumber; }
+    public int getCellIndex() { return cellIndex; }
+    public RecordType getRecordType() { return recordType; }
+
+    // setters for metadata
+    public void setTableName(String tableName) { this.tableName = tableName; }
+    public void setPageNumber(int pageNumber) { this.pageNumber = pageNumber; }
+    public void setCellIndex(int cellIndex) { this.cellIndex = cellIndex; }
+    public void setRecordType(RecordType type) { this.recordType = type; }
+
+    // Check if this is a schema record (from sqlite_master)
+    public boolean isSchemaRecord() {
+        return recordType == RecordType.SCHEMA_RECORD;
+    }
+
+    // Helper method for schema records
+    public SchemaInfo getSchemaInfo() {
+        if (!isSchemaRecord() || values.size() < 5) {
+            return null;
+        }
+
+        return new SchemaInfo(
+                (String) values.get(0),  // type
+                (String) values.get(1),  // name
+                (String) values.get(2),  // tbl_name
+                ((Number) values.get(3)).intValue(),  // rootpage
+                (String) values.get(4)   // sql
+        );
+    }
+
+    public static class SchemaInfo {
+        public final String type;
+        public final String name;
+        public final String tableName;
+        public final int rootPage;
+        public final String sql;
+
+        public SchemaInfo(String type, String name, String tableName, int rootPage, String sql) {
+            this.type = type;
+            this.name = name;
+            this.tableName = tableName;
+            this.rootPage = rootPage;
+            this.sql = sql;
+        }
+
+        public boolean isTable() {
+            return "table".equalsIgnoreCase(type);
+        }
+    }
 
     @Override
     public String toString() {
@@ -88,9 +150,6 @@ public class SQLiteRecord {
             long headerSizeValue = result[0];
             int headerSizeBytes = (int)result[1];
 
-            System.out.println("DEBUG: At position " + pos + ", read header size: " +
-                    headerSizeValue + " (varint bytes: " + headerSizeBytes + ")");
-            System.out.println("DEBUG: Payload size limit: " + payloadSize);
 
             if (headerSizeValue > payloadSize) {
                 throw new IllegalArgumentException("Header size " + headerSizeValue +
@@ -102,11 +161,15 @@ public class SQLiteRecord {
             int headerSize = (int)headerSizeValue;
             int headerEnd = startOffset + headerSize;
 
+
             // Read all serial types
             List<Long> serialTypes = new ArrayList<>();
+
             while (pos < headerEnd) {
                 result = VarintDecoder.decodeVarint(data, pos);
-                serialTypes.add(result[0]);
+                long serialType = result[0];
+
+                serialTypes.add(serialType);
                 pos += (int)result[1];
             }
 

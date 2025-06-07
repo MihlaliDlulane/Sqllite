@@ -1,15 +1,47 @@
 package parser;
 
-import helpers.VarintDecoder;
-
 import java.nio.ByteBuffer;
 import java.nio.ByteOrder;
 
+import dataTypes.CellInfo;
+import dataTypes.SQLiteRecord;
+import helpers.VarintDecoder;
+
 public class CellParser {
 
+
+    public static void parseCell(byte[] page, int cellOffset, byte pageType) {
+        CellInfo cellInfo = parseCellInfo(page, cellOffset, pageType);
+        if (cellInfo != null && !cellInfo.hasError()) {
+            cellInfo.print();
+        }
+    }
+
+
+    public static CellInfo parseCellInfo(byte[] page, int cellOffset, byte pageType) {
+        try {
+            switch (pageType) {
+                case 0x0D -> { return parseTableLeafCellInfo(page, cellOffset); }
+                case 0x05 -> { return parseTableInteriorCellInfo(page, cellOffset); }
+                case 0x0A -> { return parseIndexLeafCellInfo(page, cellOffset); }
+                case 0x02 -> { return parseIndexInteriorCellInfo(page, cellOffset); }
+                default -> {
+                    CellInfo cellInfo = new CellInfo();
+                    cellInfo.setError("Unknown page type: 0x" + String.format("%02X", pageType));
+                    return cellInfo;
+                }
+            }
+        } catch (Exception e) {
+            CellInfo cellInfo = new CellInfo();
+            cellInfo.setError(e.getMessage());
+            return cellInfo;
+        }
+    }
+
     // Table B-tree leaf cell (0x0D pages)
-    public static void parseTableLeafCell(byte[] page, int cellOffset) {
-        System.out.println("=== Parsing table leaf cell at offset " + cellOffset + " ===");
+    private static CellInfo parseTableLeafCellInfo(byte[] page, int cellOffset) {
+        CellInfo cellInfo = new CellInfo();
+        cellInfo.setCellType((byte) 0x0D);
 
         int pos = cellOffset;
 
@@ -19,7 +51,7 @@ public class CellParser {
         int varintLen = (int)result[1];
         pos += varintLen;
 
-        System.out.println("Payload size: " + payloadSize + " (varint: " + varintLen + " bytes)");
+        cellInfo.setPayloadSize(payloadSize);
 
         // Read rowid
         result = VarintDecoder.decodeVarint(page, pos);
@@ -27,26 +59,19 @@ public class CellParser {
         varintLen = (int)result[1];
         pos += varintLen;
 
-        System.out.println("Rowid: " + rowid + " (varint: " + varintLen + " bytes)");
+        cellInfo.setRowId(rowid);
 
         // Parse the record
         SQLiteRecord record = SQLiteRecord.parse(page, pos, (int)payloadSize);
-        System.out.println("Column count: " + record.getColumnCount());
-        System.out.println("Values: " + record);
+        cellInfo.setRecord(record);
 
-        // Access individual values
-        for (int i = 0; i < record.getColumnCount(); i++) {
-            Object value = record.getValue(i);
-            long serialType = record.getSerialType(i);
-            SQLiteRecord.ColumnType colType = SQLiteRecord.ColumnType.fromSerialType(serialType);
-            System.out.printf("Column %d: type=%s, value=%s%n",
-                    i, colType.type, value);
-        }
+        return cellInfo;
     }
 
     // Table B-tree interior cell (0x05 pages)
-    public static void parseTableInteriorCell(byte[] page, int cellOffset) {
-        System.out.println("=== Parsing table interior cell at offset " + cellOffset + " ===");
+    private static CellInfo parseTableInteriorCellInfo(byte[] page, int cellOffset) {
+        CellInfo cellInfo = new CellInfo();
+        cellInfo.setCellType((byte) 0x05);
 
         int pos = cellOffset;
 
@@ -54,18 +79,21 @@ public class CellParser {
         int leftChild = ByteBuffer.wrap(page, pos, 4).order(ByteOrder.BIG_ENDIAN).getInt();
         pos += 4;
 
-        System.out.println("Left child page: " + leftChild);
-
         // Read integer key (rowid)
         long[] result = VarintDecoder.decodeVarint(page, pos);
         long rowid = result[0];
 
-        System.out.println("Rowid (integer key): " + rowid);
+        cellInfo.setRowId(rowid);
+        // For interior cells, we might want to store the left child page
+        // You could add a leftChildPage field to CellInfo if needed
+
+        return cellInfo;
     }
 
     // Index B-tree leaf cell (0x0A pages)
-    public static void parseIndexLeafCell(byte[] page, int cellOffset) {
-        System.out.println("=== Parsing index leaf cell at offset " + cellOffset + " ===");
+    private static CellInfo parseIndexLeafCellInfo(byte[] page, int cellOffset) {
+        CellInfo cellInfo = new CellInfo();
+        cellInfo.setCellType((byte) 0x0A);
 
         int pos = cellOffset;
 
@@ -75,26 +103,19 @@ public class CellParser {
         int varintLen = (int)result[1];
         pos += varintLen;
 
-        System.out.println("Payload size: " + payloadSize + " bytes");
+        cellInfo.setPayloadSize(payloadSize);
 
         // Parse the record
         SQLiteRecord record = SQLiteRecord.parse(page, pos, (int)payloadSize);
-        System.out.println("Column count: " + record.getColumnCount());
-        System.out.println("Values: " + record);
+        cellInfo.setRecord(record);
 
-        // Access individual values
-        for (int i = 0; i < record.getColumnCount(); i++) {
-            Object value = record.getValue(i);
-            long serialType = record.getSerialType(i);
-            SQLiteRecord.ColumnType colType = SQLiteRecord.ColumnType.fromSerialType(serialType);
-            System.out.printf("Column %d: type=%s, value=%s%n",
-                    i, colType.type, value);
-        }
+        return cellInfo;
     }
 
     // Index B-tree interior cell (0x02 pages)
-    public static void parseIndexInteriorCell(byte[] page, int cellOffset) {
-        System.out.println("=== Parsing index interior cell at offset " + cellOffset + " ===");
+    private static CellInfo parseIndexInteriorCellInfo(byte[] page, int cellOffset) {
+        CellInfo cellInfo = new CellInfo();
+        cellInfo.setCellType((byte) 0x02);
 
         int pos = cellOffset;
 
@@ -102,92 +123,97 @@ public class CellParser {
         int leftChild = ByteBuffer.wrap(page, pos, 4).order(ByteOrder.BIG_ENDIAN).getInt();
         pos += 4;
 
-        System.out.println("Left child page: " + leftChild);
-
         // Read payload size
         long[] result = VarintDecoder.decodeVarint(page, pos);
         long payloadSize = result[0];
         int varintLen = (int)result[1];
         pos += varintLen;
 
-        System.out.println("Payload size: " + payloadSize + " bytes");
-
+        cellInfo.setPayloadSize(payloadSize);
 
         // Parse the record
         SQLiteRecord record = SQLiteRecord.parse(page, pos, (int)payloadSize);
-        System.out.println("Column count: " + record.getColumnCount());
-        System.out.println("Values: " + record);
+        cellInfo.setRecord(record);
 
-        // Access individual values
-        for (int i = 0; i < record.getColumnCount(); i++) {
-            Object value = record.getValue(i);
-            long serialType = record.getSerialType(i);
-            SQLiteRecord.ColumnType colType = SQLiteRecord.ColumnType.fromSerialType(serialType);
-            System.out.printf("Column %d: type=%s, value=%s%n",
-                    i, colType.type, value);
-        }
+        return cellInfo;
     }
 
+    // Keep original print methods for backward compatibility
+    public static void parseTableLeafCell(byte[] page, int cellOffset) {
+        System.out.println("=== Parsing table leaf cell at offset " + cellOffset + " ===");
 
-    // Dispatch to correct parser based on page type
-    public static void parseCell(byte[] page, int cellOffset, byte pageType) {
-        switch (pageType) {
-            case 0x0D -> parseTableLeafCell(page, cellOffset);
-            case 0x05 -> parseTableInteriorCell(page, cellOffset);
-            case 0x0A -> parseIndexLeafCell(page, cellOffset);
-            case 0x02 -> parseIndexInteriorCell(page, cellOffset);
-            default -> System.out.println("Unknown page type: 0x" +
-                    String.format("%02X", pageType));
-        }
-    }
+        CellInfo cellInfo = parseTableLeafCellInfo(page, cellOffset);
 
-    private static String getSerialTypeName(long serialType) {
-        if (serialType == 0) return "NULL";
-        if (serialType == 1) return "8-bit int";
-        if (serialType == 2) return "16-bit int";
-        if (serialType == 3) return "24-bit int";
-        if (serialType == 4) return "32-bit int";
-        if (serialType == 5) return "48-bit int";
-        if (serialType == 6) return "64-bit int";
-        if (serialType == 7) return "64-bit float";
-        if (serialType == 8) return "integer 0";
-        if (serialType == 9) return "integer 1";
-        if (serialType >= 12 && serialType % 2 == 0) {
-            return "BLOB length " + ((serialType - 12) / 2);
-        }
-        if (serialType >= 13) {
-            return "TEXT length " + ((serialType - 13) / 2);
-        }
-        return "Unknown type " + serialType;
-    }
+        System.out.println("Payload size: " + cellInfo.getPayloadSize() + " bytes");
+        System.out.println("Rowid: " + cellInfo.getRowId());
 
-    private static int getIntegerBytes(long serialType) {
-        return switch ((int)serialType) {
-            case 1 -> 1;
-            case 2 -> 2;
-            case 3 -> 3;
-            case 4 -> 4;
-            case 5 -> 6;
-            case 6 -> 8;
-            default -> 0;
-        };
-    }
+        SQLiteRecord record = cellInfo.getRecord();
+        if (record != null) {
+            System.out.println("Column count: " + record.getColumnCount());
+            System.out.println("Values: " + record);
 
-    private static long readInteger(byte[] data, int offset, int bytes) {
-        long value = 0;
-        for (int i = 0; i < bytes; i++) {
-            value = (value << 8) | (data[offset + i] & 0xFF);
-        }
-        // Handle sign extension for negative values
-        if (bytes < 8 && (data[offset] & 0x80) != 0) {
-            // Sign extend
-            for (int i = bytes; i < 8; i++) {
-                value |= (0xFFL << (i * 8));
+            // Access individual values
+            for (int i = 0; i < record.getColumnCount(); i++) {
+                Object value = record.getValue(i);
+                long serialType = record.getSerialType(i);
+                SQLiteRecord.ColumnType colType = SQLiteRecord.ColumnType.fromSerialType(serialType);
+                System.out.printf("Column %d: type=%s, value=%s%n",
+                        i, colType.type, value);
             }
         }
-        return value;
+    }
+
+    public static void parseTableInteriorCell(byte[] page, int cellOffset) {
+        System.out.println("=== Parsing table interior cell at offset " + cellOffset + " ===");
+
+        CellInfo cellInfo = parseTableInteriorCellInfo(page, cellOffset);
+
+        System.out.println("Rowid (integer key): " + cellInfo.getRowId());
+    }
+
+    public static void parseIndexLeafCell(byte[] page, int cellOffset) {
+        System.out.println("=== Parsing index leaf cell at offset " + cellOffset + " ===");
+
+        CellInfo cellInfo = parseIndexLeafCellInfo(page, cellOffset);
+
+        System.out.println("Payload size: " + cellInfo.getPayloadSize() + " bytes");
+
+        SQLiteRecord record = cellInfo.getRecord();
+        if (record != null) {
+            System.out.println("Column count: " + record.getColumnCount());
+            System.out.println("Values: " + record);
+
+            // Access individual values
+            for (int i = 0; i < record.getColumnCount(); i++) {
+                Object value = record.getValue(i);
+                long serialType = record.getSerialType(i);
+                SQLiteRecord.ColumnType colType = SQLiteRecord.ColumnType.fromSerialType(serialType);
+                System.out.printf("Column %d: type=%s, value=%s%n",
+                        i, colType.type, value);
+            }
+        }
+    }
+
+    public static void parseIndexInteriorCell(byte[] page, int cellOffset) {
+        System.out.println("=== Parsing index interior cell at offset " + cellOffset + " ===");
+
+        CellInfo cellInfo = parseIndexInteriorCellInfo(page, cellOffset);
+
+        System.out.println("Payload size: " + cellInfo.getPayloadSize() + " bytes");
+
+        SQLiteRecord record = cellInfo.getRecord();
+        if (record != null) {
+            System.out.println("Column count: " + record.getColumnCount());
+            System.out.println("Values: " + record);
+
+            // Access individual values
+            for (int i = 0; i < record.getColumnCount(); i++) {
+                Object value = record.getValue(i);
+                long serialType = record.getSerialType(i);
+                SQLiteRecord.ColumnType colType = SQLiteRecord.ColumnType.fromSerialType(serialType);
+                System.out.printf("Column %d: type=%s, value=%s%n",
+                        i, colType.type, value);
+            }
+        }
     }
 }
-
-
-

@@ -36,7 +36,7 @@ public class Main {
       case ".tables" -> SQLiteInfoReader.dotTableCommand(databaseFilePath);
       default -> {
         System.err.println("Unknown command: " + command);
-        System.err.println("Available commands: .dbinfo");
+        System.err.println("Available commands: .dbinfo  .analyse .tables");
         System.exit(1);
       }
     }
